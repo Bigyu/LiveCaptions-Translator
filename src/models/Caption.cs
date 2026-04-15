@@ -179,6 +179,9 @@ namespace LiveCaptionsTranslator.models
                 if (parts.Count == 0)
                     return string.Empty;
 
+                if (Translator.Setting.OverlaySentenceSeparator)
+                    return string.Join("\n", parts);
+
                 return ConcatenateWithPunctuation(parts);
             }
         }

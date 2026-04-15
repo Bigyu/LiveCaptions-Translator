@@ -1,4 +1,4 @@
-﻿<Page
+<Page
     x:Class="LiveCaptionsTranslator.SettingPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -258,6 +258,17 @@
                     SmallChange="1"
                     Value="{Binding DisplaySentences, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                     ValueChanged="DisplaySentences_ValueChanged" />
+            </StackPanel>
+
+            <StackPanel Margin="15,10,0,0" Orientation="Vertical">
+                <TextBlock Margin="2.5,0,0,5" Text="Sentence Line Break" />
+                <ui:ToggleSwitch
+                    Width="135"
+                    Height="30"
+                    Padding="10,4,10,7"
+                    IsChecked="{Binding OverlaySentenceSeparator, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    OffContent="Off"
+                    OnContent="On" />
             </StackPanel>
         </StackPanel>
 
