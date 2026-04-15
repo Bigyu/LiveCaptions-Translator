@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
@@ -55,6 +55,9 @@
 	    <AutoGen>True</AutoGen>
 	    <DependentUpon>AssemblyInfo.tt</DependentUpon>
 	  </Compile>
+	  <Compile Remove="LiveCaptionsTranslator.Tests\**\*.cs" />
+	  <None Remove="LiveCaptionsTranslator.Tests\**" />
+	  <Content Remove="LiveCaptionsTranslator.Tests\**" />
 	</ItemGroup>
 
 </Project>

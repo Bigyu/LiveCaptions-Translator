@@ -1,0 +1,23 @@
+{
+  "active_plan": "/home/hym/LiveCaptions-Translator/.sisyphus/plans/correction-handling.md",
+  "started_at": "2026-04-15T16:43:30.548Z",
+  "session_ids": [
+    "ses_26e6d5dddffeUXFdMcspTzkFBG"
+  ],
+  "session_origins": {
+    "ses_26e6d5dddffeUXFdMcspTzkFBG": "direct"
+  },
+  "plan_name": "correction-handling",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "搭建 xUnit 测试项目基础设施",
+      "session_id": "ses_26df7458dffeqQAR6mET8cKJlP",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-15T16:53:41.121Z"
+    }
+  }
+}

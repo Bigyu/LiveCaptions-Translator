@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -6,6 +6,15 @@ using LiveCaptionsTranslator.utils;
 
 namespace LiveCaptionsTranslator.models
 {
+    public class SentenceState
+    {
+        public string OriginalText = string.Empty;
+        public string TranslatedText = string.Empty;
+        public int Version = 0;
+        public bool IsComplete = false;
+        public bool IsTranslationPending = false;
+    }
+
     public class Caption : INotifyPropertyChanged
     {
         public const int MAX_CONTEXTS = 10;
@@ -18,6 +27,9 @@ namespace LiveCaptionsTranslator.models
         private string overlayOriginalCaption = " ";
         private string overlayCurrentTranslation = " ";
         private string overlayNoticePrefix = " ";
+
+        public readonly object _sentenceStatesLock = new object();
+        public List<SentenceState> SentenceStates { get; } = new();
 
         public string OriginalCaption { get; set; } = string.Empty;
         public string TranslatedCaption { get; set; } = string.Empty;

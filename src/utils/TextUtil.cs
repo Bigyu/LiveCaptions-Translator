@@ -32,12 +32,13 @@ namespace LiveCaptionsTranslator.utils
             for (int i = 0; i < splits.Length; i++)
             {
                 splits[i] = splits[i].Trim();
-                if (i == splits.Length - 1)
+                if (i == splits.Length - 1 || splits[i].Length == 0)
                     continue;
 
+                // Use comma-level punctuation to avoid creating fake EOS boundaries
                 char lastChar = splits[i][^1];
                 if (Encoding.UTF8.GetByteCount(splits[i]) >= byteThreshold)
-                    splits[i] += isCJChar(lastChar) ? "。" : ". ";
+                    splits[i] += isCJChar(lastChar) ? "，" : ", ";
                 else
                     splits[i] += isCJChar(lastChar) ? "——" : "—";
             }

@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Windows.Automation;
 
@@ -17,6 +18,9 @@ namespace LiveCaptionsTranslator
 
         private static readonly Queue<string> pendingTextQueue = new();
         private static readonly TranslationTaskQueue translationTaskQueue = new();
+
+        private static List<string> trackedSentences = new();
+        private static string lastEnqueuedIncomplete = string.Empty;
 
         public static AutomationElement? Window
         {
@@ -46,9 +50,6 @@ namespace LiveCaptionsTranslator
 
         public static void SyncLoop()
         {
-            int idleCount = 0;
-            int syncCount = 0;
-
             while (true)
             {
                 if (Window == null)
@@ -80,81 +81,126 @@ namespace LiveCaptionsTranslator
                 fullText = RegexPatterns.PunctuationSpace().Replace(fullText, "$1 ");
                 fullText = RegexPatterns.CJPunctuationSpace().Replace(fullText, "$1");
                 // Note: For certain languages (such as Japanese), LiveCaptions excessively uses `\n`.
-                // Replace redundant `\n` within sentences with comma or period.
+                // Replace redundant `\n` within sentences with comma-level punctuation.
                 fullText = TextUtil.ReplaceNewlines(fullText, TextUtil.MEDIUM_THRESHOLD);
 
-                // Prevent adding the last sentence from previous running to log cards
-                // before the first sentence is completed.
-                if (fullText.IndexOfAny(TextUtil.PUNC_EOS) == -1 && Caption.Contexts.Count > 0)
+                var (completedSentences, incompleteSentence) = SplitSentences(fullText);
+
+                // Clear stale contexts when first sentence hasn't completed yet
+                if (completedSentences.Count == 0 && Caption.Contexts.Count > 0)
                     ClearContexts();
 
-                // Get the last sentence.
-                int lastEOSIndex;
-                if (Array.IndexOf(TextUtil.PUNC_EOS, fullText[^1]) != -1)
-                    lastEOSIndex = fullText[0..^1].LastIndexOfAny(TextUtil.PUNC_EOS);
-                else
-                    lastEOSIndex = fullText.LastIndexOfAny(TextUtil.PUNC_EOS);
-                string latestCaption = fullText.Substring(lastEOSIndex + 1);
+                // Align tracked sentences with current: old sentences scroll off the front
+                int scrollOff = Math.Max(0, trackedSentences.Count - completedSentences.Count);
+                var alignedTracked = trackedSentences.Skip(scrollOff).ToList();
+                int compareCount = Math.Min(alignedTracked.Count, completedSentences.Count);
 
-                // If the last sentence is too short, extend it by adding the previous sentence.
-                // Note: LiveCaptions may generate multiple characters including EOS at once.
-                if (lastEOSIndex > 0 && Encoding.UTF8.GetByteCount(latestCaption) < TextUtil.SHORT_THRESHOLD)
+                // Reset if most aligned sentences don't match (LiveCaptions refreshed)
+                if (compareCount > 0)
                 {
-                    lastEOSIndex = fullText[0..lastEOSIndex].LastIndexOfAny(TextUtil.PUNC_EOS);
-                    latestCaption = fullText.Substring(lastEOSIndex + 1);
+                    int matchCount = 0;
+                    for (int i = 0; i < compareCount; i++)
+                    {
+                        if (TextUtil.Similarity(alignedTracked[i], completedSentences[i])
+                            > TextUtil.SIM_THRESHOLD)
+                            matchCount++;
+                    }
+                    if (matchCount < compareCount / 2)
+                    {
+                        trackedSentences.Clear();
+                        ClearContexts();
+                        alignedTracked = [];
+                        compareCount = 0;
+                    }
                 }
 
-                // `OverlayOriginalCaption`: The sentence to be displayed on Overlay Window.
-                Caption.OverlayOriginalCaption = latestCaption;
-                for (int historyCount = Math.Min(Setting.DisplaySentences, Caption.Contexts.Count);
-                     historyCount > 0 && lastEOSIndex > 0;
-                     historyCount--)
+                for (int i = 0; i < compareCount; i++)
                 {
-                    lastEOSIndex = fullText[0..lastEOSIndex].LastIndexOfAny(TextUtil.PUNC_EOS);
-                    Caption.OverlayOriginalCaption = fullText.Substring(lastEOSIndex + 1);
+                    if (string.CompareOrdinal(alignedTracked[i], completedSentences[i]) != 0)
+                    {
+                        string sentence = completedSentences[i];
+                        if (Encoding.UTF8.GetByteCount(sentence) < TextUtil.SHORT_THRESHOLD && i > 0)
+                            sentence = completedSentences[i - 1] + " " + sentence;
+                        pendingTextQueue.Enqueue(sentence);
+                    }
                 }
 
-                // `DisplayOriginalCaption`: The sentence to be displayed on Main Window.
-                if (string.CompareOrdinal(Caption.DisplayOriginalCaption, latestCaption) != 0)
+                for (int i = alignedTracked.Count; i < completedSentences.Count; i++)
                 {
-                    Caption.DisplayOriginalCaption = latestCaption;
-                    // If the last sentence is too long, truncate it when displayed.
+                    string sentence = completedSentences[i];
+                    if (Encoding.UTF8.GetByteCount(sentence) < TextUtil.SHORT_THRESHOLD && i > 0)
+                        sentence = completedSentences[i - 1] + " " + sentence;
+                    pendingTextQueue.Enqueue(sentence);
+                    lastEnqueuedIncomplete = string.Empty;
+                }
+
+                trackedSentences = completedSentences.ToList();
+
+                // Fallback for very long incomplete sentences
+                if (incompleteSentence.Length > 0
+                    && Encoding.UTF8.GetByteCount(incompleteSentence) >= TextUtil.LONG_THRESHOLD
+                    && string.CompareOrdinal(lastEnqueuedIncomplete, incompleteSentence) != 0)
+                {
+                    pendingTextQueue.Enqueue(incompleteSentence);
+                    lastEnqueuedIncomplete = incompleteSentence;
+                }
+
+                // ── Display ──
+
+                int displayCount = Math.Min(Setting.DisplaySentences, Caption.Contexts.Count);
+                int eosSeen = 0;
+                int overlayStart = 0;
+                for (int i = fullText.Length - 1; i >= 0; i--)
+                {
+                    if (Array.IndexOf(TextUtil.PUNC_EOS, fullText[i]) != -1)
+                    {
+                        eosSeen++;
+                        if (eosSeen > displayCount)
+                        {
+                            overlayStart = i + 1;
+                            break;
+                        }
+                    }
+                }
+                while (overlayStart < fullText.Length && fullText[overlayStart] == ' ')
+                    overlayStart++;
+                Caption.OverlayOriginalCaption = overlayStart < fullText.Length
+                    ? fullText[overlayStart..]
+                    : fullText;
+
+                // Display current incomplete sentence, or last completed if no incomplete
+                string displaySentence = incompleteSentence.Length > 0
+                    ? incompleteSentence
+                    : (completedSentences.Count > 0 ? completedSentences[^1] : fullText);
+                if (string.CompareOrdinal(Caption.DisplayOriginalCaption, displaySentence) != 0)
+                {
+                    Caption.DisplayOriginalCaption = displaySentence;
                     Caption.DisplayOriginalCaption =
                         TextUtil.ShortenDisplaySentence(Caption.DisplayOriginalCaption, TextUtil.VERYLONG_THRESHOLD);
                 }
 
-                // Prepare for `OriginalCaption`. If Expanded, only retain the complete sentence.
-                int lastEOS = latestCaption.LastIndexOfAny(TextUtil.PUNC_EOS);
-                if (lastEOS != -1)
-                    latestCaption = latestCaption.Substring(0, lastEOS + 1);
-                // `OriginalCaption`: The sentence to be really translated.
-                if (string.CompareOrdinal(Caption.OriginalCaption, latestCaption) != 0)
-                {
-                    Caption.OriginalCaption = latestCaption;
-
-                    idleCount = 0;
-                    if (Array.IndexOf(TextUtil.PUNC_EOS, Caption.OriginalCaption[^1]) != -1)
-                    {
-                        syncCount = 0;
-                        pendingTextQueue.Enqueue(Caption.OriginalCaption);
-                    }
-                    else if (Encoding.UTF8.GetByteCount(Caption.OriginalCaption) >= TextUtil.SHORT_THRESHOLD)
-                        syncCount++;
-                }
-                else
-                    idleCount++;
-
-                // `TranslateFlag` determines whether this sentence should be translated.
-                // When `OriginalCaption` remains unchanged, `idleCount` +1; when `OriginalCaption` changes, `MaxSyncInterval` +1.
-                if (syncCount > Setting.MaxSyncInterval ||
-                    idleCount == Setting.MaxIdleInterval)
-                {
-                    syncCount = 0;
-                    pendingTextQueue.Enqueue(Caption.OriginalCaption);
-                }
-
                 Thread.Sleep(25);
             }
+        }
+
+        private static (List<string> completed, string incomplete) SplitSentences(string fullText)
+        {
+            var completed = new List<string>();
+            int start = 0;
+            for (int i = 0; i < fullText.Length; i++)
+            {
+                if (Array.IndexOf(TextUtil.PUNC_EOS, fullText[i]) != -1)
+                {
+                    string sentence = fullText[start..(i + 1)].Trim();
+                    if (sentence.Length > 0)
+                        completed.Add(sentence);
+                    start = i + 1;
+                }
+            }
+            string incomplete = start < fullText.Length
+                ? fullText[start..].Trim()
+                : string.Empty;
+            return (completed, incomplete);
         }
 
         public static async Task TranslateLoop()
