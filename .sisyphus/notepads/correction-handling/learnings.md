@@ -27,3 +27,13 @@
 - dotnet test CANNOT run on Linux for net8.0-windows (requires WindowsDesktop.App runtime)
 - Build succeeds on Linux; tests will pass on Windows
 - .NET 8 SDK installed to ~/.dotnet (not pre-installed)
+
+## 2026-04-16 TranslationTaskQueue Version Number Mechanism
+- Replaced cancellation-based mechanism with per-sentence version number mechanism
+- TranslationTask now has SentenceIndex and Version fields
+- OnTaskCompleted NO longer cancels other tasks — just removes completed task from list and writes back to Caption.SentenceStates
+- Version check (>=) prevents stale writes from out-of-order completions
+- Output property now computes from Caption.SentenceStates (last non-empty TranslatedText) instead of stored field
+- Added backward-compatible 2-param Enqueue overload (sentenceIndex=0, version=0) so existing TranslateLoop call still compiles
+- Log/AddContexts only called for complete translations (isComplete=true), not for partial/in-progress ones
+- CTS still kept on TranslationTask for now (TranslateLoop still passes CancellationTokenSource) — will be cleaned up in Task 6

@@ -1,22 +1,45 @@
-﻿namespace LiveCaptionsTranslator.models
+namespace LiveCaptionsTranslator.models
 {
     public class TranslationTaskQueue
     {
         private readonly object _lock = new object();
         private readonly List<TranslationTask> tasks;
 
-        private (string translatedText, bool isChoke) output;
-        public (string translatedText, bool isChoke) Output => output;
+        public (string translatedText, bool isChoke) Output
+        {
+            get
+            {
+                var caption = Caption.GetInstance();
+                lock (caption._sentenceStatesLock)
+                {
+                    for (int i = caption.SentenceStates.Count - 1; i >= 0; i--)
+                    {
+                        var state = caption.SentenceStates[i];
+                        if (!string.IsNullOrEmpty(state.TranslatedText))
+                            return (state.TranslatedText, state.IsComplete);
+                    }
+                }
+                return (string.Empty, false);
+            }
+        }
 
         public TranslationTaskQueue()
         {
             tasks = new List<TranslationTask>();
-            output = (string.Empty, false);
         }
 
-        public void Enqueue(Func<CancellationToken, Task<(string, bool)>> worker, string originalText)
+        public void Enqueue(Func<CancellationToken, Task<(string, bool)>> worker,
+            string originalText)
         {
-            var newTranslationTask = new TranslationTask(worker, originalText, new CancellationTokenSource());
+            Enqueue(worker, originalText, 0, 0);
+        }
+
+        public void Enqueue(Func<CancellationToken, Task<(string, bool)>> worker,
+            string originalText, int sentenceIndex, int version)
+        {
+            var newTranslationTask = new TranslationTask(
+                worker, originalText, new CancellationTokenSource(), sentenceIndex, version
+            );
             lock (_lock)
             {
                 tasks.Add(newTranslationTask);
@@ -32,21 +55,34 @@
         {
             lock (_lock)
             {
-                var index = tasks.IndexOf(translationTask);
-                for (int i = 0; i < index; i++)
-                    tasks[i].CTS.Cancel();
-                for (int i = index; i >= 0; i--)
-                    tasks.RemoveAt(i);
+                tasks.Remove(translationTask);
             }
 
-            output = translationTask.Task.Result;
-            var translatedText = output.Item1;
+            var (translatedText, isComplete) = translationTask.Task.Result;
 
-            // Log after translation.
-            bool isOverwrite = await Translator.IsOverwrite(translationTask.OriginalText);
-            if (!isOverwrite)
-                await Translator.AddContexts();
-            await Translator.Log(translationTask.OriginalText, translatedText, isOverwrite);
+            var caption = Caption.GetInstance();
+            lock (caption._sentenceStatesLock)
+            {
+                if (translationTask.SentenceIndex < caption.SentenceStates.Count)
+                {
+                    var state = caption.SentenceStates[translationTask.SentenceIndex];
+                    // Only update if this task's version is >= current version (avoid stale writes)
+                    if (translationTask.Version >= state.Version)
+                    {
+                        state.TranslatedText = translatedText;
+                        state.Version = translationTask.Version;
+                        state.IsTranslationPending = false;
+                    }
+                }
+            }
+
+            if (isComplete)
+            {
+                bool isOverwrite = await Translator.IsOverwrite(translationTask.OriginalText);
+                if (!isOverwrite)
+                    await Translator.AddContexts();
+                await Translator.Log(translationTask.OriginalText, translatedText, isOverwrite);
+            }
         }
     }
 
@@ -55,13 +91,17 @@
         public Task<(string, bool)> Task { get; }
         public string OriginalText { get; }
         public CancellationTokenSource CTS { get; }
+        public int SentenceIndex { get; }
+        public int Version { get; }
 
         public TranslationTask(Func<CancellationToken, Task<(string, bool)>> worker,
-            string originalText, CancellationTokenSource cts)
+            string originalText, CancellationTokenSource cts, int sentenceIndex, int version)
         {
             Task = worker(cts.Token);
             OriginalText = originalText;
             CTS = cts;
+            SentenceIndex = sentenceIndex;
+            Version = version;
         }
     }
 }
