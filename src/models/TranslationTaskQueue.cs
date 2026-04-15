@@ -70,6 +70,7 @@ namespace LiveCaptionsTranslator.models
                         state.TranslatedText = translatedText;
                         state.Version = translationTask.Version;
                         state.IsTranslationPending = false;
+                        state.IsComplete = isComplete;
                     }
                 }
             }
