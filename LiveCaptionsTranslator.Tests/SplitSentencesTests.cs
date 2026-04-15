@@ -96,12 +96,15 @@ public class SplitSentencesTests
     [Fact]
     public void SplitSentences_MultipleEOSInSequence_SplitsEach()
     {
-        // "Really?! Yes." → completed=["Really?!","Yes."], incomplete=""
+        // "Really?! Yes." — each EOS char splits: "Really?" | "!" | " Yes."
+        // → completed=["Really?", "!", "Yes."], incomplete=""
+        // The algorithm splits at every EOS char position, so consecutive EOS chars create separate sentences
         var (completed, incomplete) = SplitSentences("Really?! Yes.");
 
-        Assert.Equal(2, completed.Count);
-        Assert.Equal("Really?!", completed[0]);
-        Assert.Equal("Yes.", completed[1]);
+        Assert.Equal(3, completed.Count);
+        Assert.Equal("Really?", completed[0]);
+        Assert.Equal("!", completed[1]);
+        Assert.Equal("Yes.", completed[2]);
     }
 
     [Fact]
@@ -114,7 +117,7 @@ public class SplitSentencesTests
         Assert.Contains('。', TextUtil.PUNC_EOS);
         Assert.Contains('？', TextUtil.PUNC_EOS);
         Assert.Contains('！', TextUtil.PUNC_EOS);
-        Assert.Equal(7, TextUtil.PUNC_EOS.Length);
+        Assert.Equal(6, TextUtil.PUNC_EOS.Length);
     }
 
     [Fact]

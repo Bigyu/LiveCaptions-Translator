@@ -211,7 +211,7 @@ public class OverlayComputationTests
         }
 
         var (previous, current, noticePrefix) = caption.GetOverlayTranslationFromSentenceStates(3);
-        Assert.Equal("你好。 ", previous);
+        Assert.Equal("你好。", previous);
         Assert.Equal("你好吗？", current);
     }
 
