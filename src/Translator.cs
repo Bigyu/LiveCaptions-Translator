@@ -244,25 +244,33 @@ namespace LiveCaptionsTranslator
                     ? lastState.OriginalText : string.Empty;
 
                 int displayCount = Math.Min(Setting.DisplaySentences, Caption.Contexts.Count);
-                int eosSeen = 0;
-                int overlayStart = 0;
-                for (int i = fullText.Length - 1; i >= 0; i--)
+                string overlayOriginal = Caption.GetOverlayOriginalFromSentenceStates(
+                    Setting.DisplaySentences, incompleteSentence);
+                if (!string.IsNullOrEmpty(overlayOriginal))
+                    Caption.OverlayOriginalCaption = overlayOriginal;
+                else
                 {
-                    if (Array.IndexOf(TextUtil.PUNC_EOS, fullText[i]) != -1)
+                    // Fallback: use fullText-based computation when SentenceStates is empty
+                    int eosSeen = 0;
+                    int overlayStart = 0;
+                    for (int i = fullText.Length - 1; i >= 0; i--)
                     {
-                        eosSeen++;
-                        if (eosSeen > displayCount)
+                        if (Array.IndexOf(TextUtil.PUNC_EOS, fullText[i]) != -1)
                         {
-                            overlayStart = i + 1;
-                            break;
+                            eosSeen++;
+                            if (eosSeen > displayCount)
+                            {
+                                overlayStart = i + 1;
+                                break;
+                            }
                         }
                     }
+                    while (overlayStart < fullText.Length && fullText[overlayStart] == ' ')
+                        overlayStart++;
+                    Caption.OverlayOriginalCaption = overlayStart < fullText.Length
+                        ? fullText[overlayStart..]
+                        : fullText;
                 }
-                while (overlayStart < fullText.Length && fullText[overlayStart] == ' ')
-                    overlayStart++;
-                Caption.OverlayOriginalCaption = overlayStart < fullText.Length
-                    ? fullText[overlayStart..]
-                    : fullText;
 
                 // Display current incomplete sentence, or last completed if no incomplete
                 string displaySentence = incompleteSentence.Length > 0
@@ -373,14 +381,26 @@ namespace LiveCaptionsTranslator
                     Caption.DisplayTranslatedCaption =
                         TextUtil.ShortenDisplaySentence(Caption.TranslatedCaption, TextUtil.VERYLONG_THRESHOLD);
 
-                    // Overlay window
-                    if (Caption.TranslatedCaption.Contains("[ERROR]") || Caption.TranslatedCaption.Contains("[WARNING]"))
-                        Caption.OverlayCurrentTranslation = Caption.TranslatedCaption;
+                    // Overlay window — compute from SentenceStates dict
+                    var (prev, current, notice) = Caption.GetOverlayTranslationFromSentenceStates(
+                        Setting.DisplaySentences);
+                    if (!string.IsNullOrEmpty(current) || !string.IsNullOrEmpty(prev))
+                    {
+                        Caption.OverlayNoticePrefix = notice;
+                        Caption.OverlayCurrentTranslation = current;
+                        Caption.OnPropertyChanged("OverlayPreviousTranslation");
+                    }
                     else
                     {
-                        var match = RegexPatterns.NoticePrefixAndTranslation().Match(Caption.TranslatedCaption);
-                        Caption.OverlayNoticePrefix = match.Groups[1].Value.Trim();
-                        Caption.OverlayCurrentTranslation = match.Groups[2].Value.Trim();
+                        // Fallback: single-string computation when SentenceStates is empty
+                        if (Caption.TranslatedCaption.Contains("[ERROR]") || Caption.TranslatedCaption.Contains("[WARNING]"))
+                            Caption.OverlayCurrentTranslation = Caption.TranslatedCaption;
+                        else
+                        {
+                            var match = RegexPatterns.NoticePrefixAndTranslation().Match(Caption.TranslatedCaption);
+                            Caption.OverlayNoticePrefix = match.Groups[1].Value.Trim();
+                            Caption.OverlayCurrentTranslation = match.Groups[2].Value.Trim();
+                        }
                     }
                 }
 

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Linq;
 using System.Text;
 
 using LiveCaptionsTranslator.utils;
@@ -92,7 +93,7 @@ namespace LiveCaptionsTranslator.models
         }
 
         public string OverlayPreviousTranslation =>
-            GetPreviousText(Translator.Setting.DisplaySentences, TextType.Translation);
+            GetOverlayTranslationFromSentenceStates(Translator.Setting.DisplaySentences).previous;
 
         private Caption()
         {
@@ -148,6 +149,130 @@ namespace LiveCaptionsTranslator.models
                 .Where(entry => entry != null && string.CompareOrdinal(entry.TranslatedText, "N/A") != 0 &&
                                 !entry.TranslatedText.Contains("[ERROR]") &&
                                 !entry.TranslatedText.Contains("[WARNING]"));
+        }
+
+        /// <summary>
+        /// Computes Overlay original text from SentenceStates dict.
+        /// Returns the last N sentences' OriginalText concatenated, including incomplete sentence.
+        /// Falls back to empty string if SentenceStates is empty.
+        /// </summary>
+        public string GetOverlayOriginalFromSentenceStates(int displayCount, string incompleteSentenceFallback)
+        {
+            lock (_sentenceStatesLock)
+            {
+                if (SentenceStates.Count == 0)
+                    return incompleteSentenceFallback;
+
+                int lastCompletedIdx = LastActiveSentenceIndex;
+                int firstIdx = Math.Max(FirstActiveSentenceIndex, lastCompletedIdx - displayCount + 1);
+
+                var parts = new List<string>();
+                for (int i = firstIdx; i <= lastCompletedIdx; i++)
+                {
+                    if (SentenceStates.TryGetValue(i, out var state) && !string.IsNullOrEmpty(state.OriginalText))
+                        parts.Add(state.OriginalText);
+                }
+
+                if (!string.IsNullOrEmpty(incompleteSentenceFallback))
+                    parts.Add(incompleteSentenceFallback);
+
+                if (parts.Count == 0)
+                    return string.Empty;
+
+                return ConcatenateWithPunctuation(parts);
+            }
+        }
+
+        /// <summary>
+        /// Computes Overlay translation text from SentenceStates dict.
+        /// Returns (previousTranslations, currentTranslation, noticePrefix) tuple.
+        /// previousTranslations = sentences before the last one.
+        /// currentTranslation = last sentence's TranslatedText (without NoticePrefix).
+        /// noticePrefix = last sentence's NoticePrefix.
+        /// </summary>
+        public (string previous, string current, string noticePrefix) GetOverlayTranslationFromSentenceStates(int displayCount)
+        {
+            lock (_sentenceStatesLock)
+            {
+                if (SentenceStates.Count == 0)
+                    return (string.Empty, string.Empty, string.Empty);
+
+                int lastIdx = LastActiveSentenceIndex;
+                int firstIdx = Math.Max(FirstActiveSentenceIndex, lastIdx - displayCount + 1);
+
+                var translatedParts = new List<string>();
+                for (int i = firstIdx; i <= lastIdx; i++)
+                {
+                    if (SentenceStates.TryGetValue(i, out var state))
+                    {
+                        if (!string.IsNullOrEmpty(state.TranslatedText))
+                        {
+                            if (state.TranslatedText.Contains("[ERROR]") || state.TranslatedText.Contains("[WARNING]"))
+                            {
+                                if (i == lastIdx)
+                                    translatedParts.Add(state.TranslatedText);
+                            }
+                            else
+                                translatedParts.Add(state.TranslatedText);
+                        }
+                    }
+                }
+
+                if (translatedParts.Count == 0)
+                    return (string.Empty, string.Empty, string.Empty);
+
+                string currentTranslation = translatedParts[^1];
+                string noticePrefix = string.Empty;
+
+                if (!currentTranslation.Contains("[ERROR]") && !currentTranslation.Contains("[WARNING]"))
+                {
+                    var match = RegexPatterns.NoticePrefixAndTranslation().Match(currentTranslation);
+                    noticePrefix = match.Groups[1].Value.Trim();
+                    currentTranslation = match.Groups[2].Value.Trim();
+                }
+
+                var previousParts = translatedParts.Take(translatedParts.Count - 1)
+                    .Select(t => RegexPatterns.NoticePrefix().Replace(t, "").Trim())
+                    .Where(t => !string.IsNullOrEmpty(t))
+                    .ToList();
+
+                string previousTranslation = previousParts.Count > 0
+                    ? ConcatenateWithPunctuation(previousParts)
+                    : string.Empty;
+
+                return (previousTranslation, currentTranslation, noticePrefix);
+            }
+        }
+
+        /// <summary>
+        /// Concatenates text parts with appropriate punctuation separators.
+        /// Adds EOS punctuation between parts if missing, with CJ-aware spacing.
+        /// </summary>
+        private static string ConcatenateWithPunctuation(List<string> parts)
+        {
+            if (parts.Count == 0)
+                return string.Empty;
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < parts.Count; i++)
+            {
+                if (i > 0 && sb.Length > 0)
+                {
+                    char lastChar = sb[^1];
+                    if (Array.IndexOf(TextUtil.PUNC_EOS, lastChar) == -1)
+                        sb.Append(TextUtil.isCJChar(lastChar) ? "。" : ". ");
+                    else
+                        sb.Append(TextUtil.isCJChar(lastChar) ? "" : " ");
+                }
+                sb.Append(parts[i]);
+            }
+
+            if (sb.Length > 0 && Array.IndexOf(TextUtil.PUNC_EOS, sb[^1]) == -1)
+                sb.Append(TextUtil.isCJChar(sb[^1]) ? "。" : ".");
+            if (sb.Length > 0 && Encoding.UTF8.GetByteCount(sb[^1].ToString()) < 2)
+                sb.Append(' ');
+
+            return sb.ToString();
         }
 
         public void OnPropertyChanged([CallerMemberName] string propName = "")
