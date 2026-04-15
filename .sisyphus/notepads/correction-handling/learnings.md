@@ -49,3 +49,34 @@
 - TranslateLoop now passes originalSnapshot.OriginalText, SentenceIndex, ExpectedVersion to 4-param Enqueue
 - LogOnly mode uses originalSnapshot.OriginalText instead of bare string
 - Build succeeds with 0 errors (warnings are pre-existing nullability warnings)
+
+## 2026-04-16 SyncLoop Pre-Translation Trigger (idleCount/syncCount)
+- Added idleCount and syncCount as local variables in SyncLoop (declared before while loop, persist across iterations)
+- Added previousIncompleteSentence as static field (like lastEnqueuedIncomplete)
+- Logic: incompleteSentence changed → idleCount=0, syncCount++; unchanged → idleCount++; empty → reset both to 0
+- Trigger: syncCount >= MaxSyncInterval OR idleCount >= MaxIdleInterval AND byteCount >= SHORT_THRESHOLD → enqueue pre-translation
+- After trigger: reset idleCount=0, syncCount=0
+- SHORT_THRESHOLD=10 bytes (minimum for meaningful translation), LONG_THRESHOLD=160 bytes (existing long-incomplete fallback)
+- Pre-translation trigger and long-incomplete fallback are COMPLEMENTARY: pre-translation handles shorter sentences via thresholds, long-incomplete handles ≥160 bytes immediately
+- EOS complete sentences unaffected — they enqueue immediately in the new-sentence loop
+- Setting.MaxIdleInterval (default 50) and Setting.MaxSyncInterval (default 3) already existed, no new Setting properties needed
+
+## 2026-04-16 DisplayLoop Version Filtering + SentenceState Backfill (Task 5)
+- Changed SentenceStates from List<SentenceState> to Dictionary<int, SentenceState> for stable absolute indexing
+- Added FirstActiveSentenceIndex/LastActiveSentenceIndex to Caption for Output to iterate efficiently
+- Added sentenceBaseIndex static field in Translator — tracks absolute sentence index offset
+- When sentences scroll off (scrollOff > 0), sentenceBaseIndex += scrollOff, keeping indices stable
+- On LiveCaptions reset (similarity mismatch), sentenceBaseIndex reset to 0, SentenceStates cleared
+- SyncLoop now creates/updates SentenceState entries for all completed sentences each iteration
+- SyncLoop sets Caption.OriginalCaption from last SentenceState's OriginalText
+- All TranslationRequest.SentenceIndex now uses absolute index (sentenceBaseIndex + relativeIndex)
+- sentenceVersionCounters keys now use absolute indices too (via GetNextVersion(absIdx))
+- TranslateLoop IsTranslationPending marking uses Dictionary.TryGetValue instead of List index
+- TranslationTaskQueue.Output iterates from LastActiveSentenceIndex down to FirstActiveSentenceIndex
+- TranslationTaskQueue.OnTaskCompleted uses Dictionary.TryGetValue for SentenceState lookup
+- DisplayLoop code unchanged — it reads Output (computed from SentenceStates), which automatically reflects version-based filtering
+- Correction replacement: when SentenceState gets higher-version translation, Output reflects it, DisplayLoop updates
+- Pre-translation → formal translation: same mechanism — higher version auto-replaces in Output
+- [ERROR]/[WARNING] detection preserved in DisplayLoop
+- isChoke (720ms pause) logic preserved — comes from SentenceState.IsComplete via Output
+- Build succeeds with 0 errors

@@ -22,6 +22,8 @@ namespace LiveCaptionsTranslator
 
         private static List<string> trackedSentences = new();
         private static string lastEnqueuedIncomplete = string.Empty;
+        private static string previousIncompleteSentence = string.Empty;
+        private static int sentenceBaseIndex = 0;
 
         public static AutomationElement? Window
         {
@@ -51,6 +53,8 @@ namespace LiveCaptionsTranslator
 
         public static void SyncLoop()
         {
+            int idleCount = 0;
+            int syncCount = 0;
             while (true)
             {
                 if (Window == null)
@@ -96,6 +100,9 @@ namespace LiveCaptionsTranslator
                 var alignedTracked = trackedSentences.Skip(scrollOff).ToList();
                 int compareCount = Math.Min(alignedTracked.Count, completedSentences.Count);
 
+                if (scrollOff > 0)
+                    sentenceBaseIndex += scrollOff;
+
                 // Reset if most aligned sentences don't match (LiveCaptions refreshed)
                 if (compareCount > 0)
                 {
@@ -112,7 +119,31 @@ namespace LiveCaptionsTranslator
                         ClearContexts();
                         alignedTracked = [];
                         compareCount = 0;
+                        sentenceBaseIndex = 0;
+                        lock (Caption._sentenceStatesLock)
+                        {
+                            Caption.SentenceStates.Clear();
+                        }
                     }
+                }
+
+                lock (Caption._sentenceStatesLock)
+                {
+                    for (int i = 0; i < completedSentences.Count; i++)
+                    {
+                        int absIdx = sentenceBaseIndex + i;
+                        if (!Caption.SentenceStates.TryGetValue(absIdx, out var state))
+                        {
+                            state = new SentenceState { OriginalText = completedSentences[i] };
+                            Caption.SentenceStates[absIdx] = state;
+                        }
+                        else if (string.CompareOrdinal(state.OriginalText, completedSentences[i]) != 0)
+                        {
+                            state.OriginalText = completedSentences[i];
+                        }
+                    }
+                    Caption.FirstActiveSentenceIndex = sentenceBaseIndex;
+                    Caption.LastActiveSentenceIndex = sentenceBaseIndex + completedSentences.Count - 1;
                 }
 
                 for (int i = 0; i < compareCount; i++)
@@ -122,11 +153,12 @@ namespace LiveCaptionsTranslator
                         string sentence = completedSentences[i];
                         if (Encoding.UTF8.GetByteCount(sentence) < TextUtil.SHORT_THRESHOLD && i > 0)
                             sentence = completedSentences[i - 1] + " " + sentence;
-                        int version = GetNextVersion(i);
+                        int absIdx = sentenceBaseIndex + i;
+                        int version = GetNextVersion(absIdx);
                         pendingTextQueue.Enqueue(new TranslationRequest
                         {
                             OriginalText = sentence,
-                            SentenceIndex = i,
+                            SentenceIndex = absIdx,
                             IsCorrection = true,
                             ExpectedVersion = version
                         });
@@ -138,11 +170,12 @@ namespace LiveCaptionsTranslator
                     string sentence = completedSentences[i];
                     if (Encoding.UTF8.GetByteCount(sentence) < TextUtil.SHORT_THRESHOLD && i > 0)
                         sentence = completedSentences[i - 1] + " " + sentence;
-                    int version = GetNextVersion(i);
+                    int absIdx = sentenceBaseIndex + i;
+                    int version = GetNextVersion(absIdx);
                     pendingTextQueue.Enqueue(new TranslationRequest
                     {
                         OriginalText = sentence,
-                        SentenceIndex = i,
+                        SentenceIndex = absIdx,
                         IsCorrection = false,
                         ExpectedVersion = version
                     });
@@ -151,17 +184,53 @@ namespace LiveCaptionsTranslator
 
                 trackedSentences = completedSentences.ToList();
 
+                // Track incomplete sentence changes for pre-translation
+                if (string.CompareOrdinal(incompleteSentence, previousIncompleteSentence) != 0)
+                {
+                    idleCount = 0;
+                    syncCount++;
+                    previousIncompleteSentence = incompleteSentence;
+                }
+                else if (incompleteSentence.Length > 0)
+                {
+                    idleCount++;
+                }
+                else
+                {
+                    // No incomplete sentence — reset counters
+                    idleCount = 0;
+                    syncCount = 0;
+                }
+
+                // Pre-translation trigger for shorter incomplete sentences
+                if (incompleteSentence.Length > 0
+                    && (syncCount >= Setting.MaxSyncInterval || idleCount >= Setting.MaxIdleInterval)
+                    && Encoding.UTF8.GetByteCount(incompleteSentence) >= TextUtil.SHORT_THRESHOLD)
+                {
+                    int absIdx = sentenceBaseIndex + completedSentences.Count;
+                    int version = GetNextVersion(absIdx);
+                    pendingTextQueue.Enqueue(new TranslationRequest
+                    {
+                        OriginalText = incompleteSentence,
+                        SentenceIndex = absIdx,
+                        IsPreTranslation = true,
+                        ExpectedVersion = version
+                    });
+                    idleCount = 0;
+                    syncCount = 0;
+                }
+
                 // Fallback for very long incomplete sentences
                 if (incompleteSentence.Length > 0
                     && Encoding.UTF8.GetByteCount(incompleteSentence) >= TextUtil.LONG_THRESHOLD
                     && string.CompareOrdinal(lastEnqueuedIncomplete, incompleteSentence) != 0)
                 {
-                    int sentenceIndex = completedSentences.Count;
-                    int version = GetNextVersion(sentenceIndex);
+                    int absIdx = sentenceBaseIndex + completedSentences.Count;
+                    int version = GetNextVersion(absIdx);
                     pendingTextQueue.Enqueue(new TranslationRequest
                     {
                         OriginalText = incompleteSentence,
-                        SentenceIndex = sentenceIndex,
+                        SentenceIndex = absIdx,
                         IsPreTranslation = true,
                         ExpectedVersion = version
                     });
@@ -169,6 +238,10 @@ namespace LiveCaptionsTranslator
                 }
 
                 // ── Display ──
+
+                Caption.OriginalCaption = Caption.SentenceStates.TryGetValue(
+                    Caption.LastActiveSentenceIndex, out var lastState)
+                    ? lastState.OriginalText : string.Empty;
 
                 int displayCount = Math.Min(Setting.DisplaySentences, Caption.Contexts.Count);
                 int eosSeen = 0;
@@ -259,11 +332,18 @@ namespace LiveCaptionsTranslator
                     }
                     else
                     {
+                        lock (Caption._sentenceStatesLock)
+                        {
+                            if (Caption.GetInstance().SentenceStates.TryGetValue(
+                                originalSnapshot.SentenceIndex, out var state))
+                                state.IsTranslationPending = true;
+                        }
                         translationTaskQueue.Enqueue(token => Task.Run(
                             () => Translate(originalSnapshot.OriginalText, token), token),
                             originalSnapshot.OriginalText,
                             originalSnapshot.SentenceIndex,
-                            originalSnapshot.ExpectedVersion);
+                            originalSnapshot.ExpectedVersion,
+                            originalSnapshot.IsPreTranslation);
                     }
                 }
 

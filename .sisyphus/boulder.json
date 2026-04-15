@@ -18,6 +18,33 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-04-15T16:53:41.121Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "TranslationTaskQueue 版本号机制",
+      "session_id": "ses_26deca6a0ffePSNgCUOVBqEH0S",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-15T17:00:09.864Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "pendingTextQueue 元数据封装",
+      "session_id": "ses_26de8d463ffeA52zeujHZE53Q0",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-15T17:03:33.012Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "SyncLoop 预翻译触发机制",
+      "session_id": "ses_26de52f2dffeuuZZE5ooKENmwV",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-15T17:07:39.043Z"
     }
   }
 }

@@ -12,10 +12,10 @@ namespace LiveCaptionsTranslator.models
                 var caption = Caption.GetInstance();
                 lock (caption._sentenceStatesLock)
                 {
-                    for (int i = caption.SentenceStates.Count - 1; i >= 0; i--)
+                    for (int i = caption.LastActiveSentenceIndex; i >= caption.FirstActiveSentenceIndex; i--)
                     {
-                        var state = caption.SentenceStates[i];
-                        if (!string.IsNullOrEmpty(state.TranslatedText))
+                        if (caption.SentenceStates.TryGetValue(i, out var state)
+                            && !string.IsNullOrEmpty(state.TranslatedText))
                             return (state.TranslatedText, state.IsComplete);
                     }
                 }
@@ -35,10 +35,10 @@ namespace LiveCaptionsTranslator.models
         }
 
         public void Enqueue(Func<CancellationToken, Task<(string, bool)>> worker,
-            string originalText, int sentenceIndex, int version)
+            string originalText, int sentenceIndex, int version, bool isPreTranslation = false)
         {
             var newTranslationTask = new TranslationTask(
-                worker, originalText, new CancellationTokenSource(), sentenceIndex, version
+                worker, originalText, new CancellationTokenSource(), sentenceIndex, version, isPreTranslation
             );
             lock (_lock)
             {
@@ -63,10 +63,8 @@ namespace LiveCaptionsTranslator.models
             var caption = Caption.GetInstance();
             lock (caption._sentenceStatesLock)
             {
-                if (translationTask.SentenceIndex < caption.SentenceStates.Count)
+                if (caption.SentenceStates.TryGetValue(translationTask.SentenceIndex, out var state))
                 {
-                    var state = caption.SentenceStates[translationTask.SentenceIndex];
-                    // Only update if this task's version is >= current version (avoid stale writes)
                     if (translationTask.Version >= state.Version)
                     {
                         state.TranslatedText = translatedText;
@@ -76,7 +74,7 @@ namespace LiveCaptionsTranslator.models
                 }
             }
 
-            if (isComplete)
+            if (!translationTask.IsPreTranslation && isComplete)
             {
                 bool isOverwrite = await Translator.IsOverwrite(translationTask.OriginalText);
                 if (!isOverwrite)
@@ -93,15 +91,17 @@ namespace LiveCaptionsTranslator.models
         public CancellationTokenSource CTS { get; }
         public int SentenceIndex { get; }
         public int Version { get; }
+        public bool IsPreTranslation { get; }
 
         public TranslationTask(Func<CancellationToken, Task<(string, bool)>> worker,
-            string originalText, CancellationTokenSource cts, int sentenceIndex, int version)
+            string originalText, CancellationTokenSource cts, int sentenceIndex, int version, bool isPreTranslation = false)
         {
             Task = worker(cts.Token);
             OriginalText = originalText;
             CTS = cts;
             SentenceIndex = sentenceIndex;
             Version = version;
+            IsPreTranslation = isPreTranslation;
         }
     }
 }

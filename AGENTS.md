@@ -1,70 +1,83 @@
-# AGENTS.md
+# PROJECT KNOWLEDGE BASE
 
-## 项目
+**Generated:** 2026-04-15
+**Commit:** 74c437e
+**Branch:** master
 
-WPF (.NET 8, C#) Windows 11 桌面应用，通过 UI Automation 劫持内置 LiveCaptions 进程，读取其实时语音识别输出，再经由翻译 API 进行翻译。仅限 Windows，无法在 Linux 上运行。
+使用中文回复
 
-## 构建与验证
+## OVERVIEW
+
+WPF (.NET 8, C#) Win11 桌面应用 — 通过 UI Automation 劫持 LiveCaptions 进程读取实时字幕，经翻译 API 翻译。仅限 Windows。
+
+## STRUCTURE
+
+```
+src/
+├── apis/       # 翻译引擎 + LLM请求工厂 + Win32 P/Invoke（混合关注点）
+├── controls/   # 静态辅助类(SnackbarHost) + 自定义控件(StrokeDecorator)
+├── models/     # 数据模型 + 业务逻辑(TaskQueue/Setting) + 多态配置
+├── pages/      # WPF-UI Fluent 页面（4 组 .xaml + .xaml.cs）
+├── utils/      # LiveCaptions集成 + 源生成正则 + SQLite历史 + Win32
+├── windows/    # 4 个 Window（主窗口/悬浮/设置/欢迎）
+├── App.xaml.cs # 入口 — 启动3个并发后台循环
+└── Translator.cs # 静态协调器 — 全局状态枢纽
+```
+
+## WHERE TO LOOK
+
+| 任务 | 位置 | 备注 |
+|------|------|------|
+| 添加翻译引擎 | `src/apis/TranslateAPI.cs` + `src/models/TranslateAPIConfig.cs` + `src/models/Setting.cs` | 4步注册，见子目录AGENTS.md |
+| 修改字幕轮询逻辑 | `src/Translator.cs` SyncLoop | 25ms Thread.Sleep轮询 |
+| 修改翻译流程 | `src/Translator.cs` TranslateLoop → `src/models/TranslationTaskQueue.cs` | 取消旧任务机制 |
+| 修改UI显示 | `src/Translator.cs` DisplayLoop → `src/models/Caption.cs` | 单例绑定枢纽 |
+| 操控LiveCaptions窗口 | `src/utils/LiveCaptionsHandler.cs` + `src/apis/WindowsAPI.cs` | UI Automation + P/Invoke |
+| LLM请求格式回退 | `src/apis/LLMRequestDataFactory.cs` | 8种格式依次尝试 |
+| 设置持久化 | `src/models/Setting.cs` | setting.json，OnPropertyChanged自动保存 |
+| 历史记录 | `src/utils/HistoryLogger.cs`（类名SQLiteHistoryLogger） | translation_history.db |
+| UI页面/窗口 | `src/pages/` + `src/windows/` | WPF-UI Fluent设计 |
+| 版本号 | `Properties/AssemblyInfo.tt` | T4模板，日期驱动 `1.7.{yyMM/2}.{ddHH}` |
+
+## CONVENTIONS
+
+- **非 DI 架构** — 全部通过 `Translator` 静态属性访问全局状态，无 IoC 容器
+- **`Caption` 单例** — `Caption.GetInstance()` 作为所有 UI 视图的数据绑定枢纽
+- **`🔤` 标记** — LLM提示词和传统API上下文感知中界定源文本，翻译后必须移除
+- **源生成正则** — 使用 `[GeneratedRegex]` 的 `RegexPatterns`，不手写 `new Regex()`
+- **LLM推理禁用** — 所有LLM请求数据中 reasoning/thinking 强制disabled或minimal，减少延迟
+- **双重 AssemblyInfo** — `src/AssemblyInfo.cs`（手动）+ `Properties/AssemblyInfo.cs`（T4自动生成）
+- **工作目录存储** — setting.json/translation_history.db 在 `Directory.GetCurrentDirectory()`
+- **命名空间不一致** — `StyleEnums.cs` 用大写 `Utils`，其余用小写 `utils`
+- **类名与文件名不匹配** — `HistoryLogger.cs` → 类名 `SQLiteHistoryLogger`
+
+## ANTI-PATTERNS（禁止）
+
+- **禁止抛出翻译异常** — 必须返回 `[ERROR]`/`[WARNING]` 前缀字符串，唯一例外：`OperationCanceledException` 必须 rethrow
+- **禁止遗漏新引擎注册** — 必须在4处同步注册：TRANSLATE_FUNCTIONS + TranslateAPIConfig + configs + configIndices
+- **禁止遗漏 Setting 自动保存** — 新属性 setter 必须调用 OnPropertyChanged（触发自动保存）
+- **禁止直接修改 pendingTextQueue** — 它是 SyncLoop↔TranslateLoop 的桥梁（单生产者单消费者）
+- **禁止在 TranslationTaskQueue 之外管理翻译任务** — 新任务取消旧任务机制在 Queue 内维护
+- **禁止启用 LLM 推理/思考** — 必须禁用以减少响应延迟
+- **禁止使用非源生成正则** — 文本预处理用 RegexPatterns，不手写 `new Regex()`
+- **禁止修改 🔤 标记语义** — 界定源文本，翻译后必须移除
+
+## COMMANDS
 
 ```bash
 dotnet restore
-dotnet format ./LiveCaptionsTranslator.csproj --verify-no-changes --verbosity diagnostic   # lint/格式检查
+dotnet format ./LiveCaptionsTranslator.csproj --verify-no-changes --verbosity diagnostic   # lint
 dotnet build
-dotnet test --verbosity normal
+dotnet test --verbosity normal  # 无测试项目，此命令实质为空操作
 ```
 
-CI 还会执行 `dotnet publish`（win-x64 和 win-arm64，含自包含和框架依赖两种模式）。仓库当前**没有单元测试**——`dotnet test` 大概率找不到可运行的测试。
+CI 发布4变体：win-x64/win-arm64 × 自包含/框架依赖，单文件模式。
 
-## Git 工作流
+## NOTES
 
-**每次完成一个功能更新后，必须立即进行 git commit 保存。** 不要积累多个功能再一次性提交。
-
-```bash
-git add -A
-git commit -m "功能描述（中文或英文均可，简明扼要）"
-```
-
-例如：新增翻译引擎后提交 `git commit -m "添加 LibreTranslate 翻译引擎支持"`。
-
-## 架构
-
-整个应用在 `src/` 下，单一项目，无多包/monorepo 结构。
-
-**入口**：`src/App.xaml.cs` — 启动时运行三个并发后台循环：
-
-1. **`Translator.SyncLoop()`** — 每 25ms 轮询 LiveCaptions UI 元素（`CaptionsTextBlock`，通过 UI Automation），预处理文本，提取最新句子，入队
-2. **`Translator.TranslateLoop()`** — 从队列取出文本，分发到 `TranslationTaskQueue`
-3. **`Translator.DisplayLoop()`** — 读取翻译结果，更新 UI（主窗口 + 悬浮窗）
-
-**核心协调**：`src/Translator.cs` — 静态类，持有全局状态（`Window`、`Caption`、`Setting`）。非 DI 架构，全部通过静态属性访问。
-
-**LiveCaptions 集成**：`src/utils/LiveCaptionsHandler.cs` — 启动 `LiveCaptions.exe`，通过 `AutomationElement` 查找窗口，隐藏任务栏图标，从 `CaptionsTextBlock` AutomationId 读取字幕文本。使用 Win32 P/Invoke（`src/apis/WindowsAPI.cs`）操控窗口。
-
-**翻译引擎**：`src/apis/TranslateAPI.cs` — 包含 11 个 `Func<string, CancellationToken, Task<string>>` 的字典。添加新翻译引擎需要：
-- 在 `TRANSLATE_FUNCTIONS` 字典中添加条目
-- 在 `src/models/TranslateAPIConfig.cs` 中添加继承 `TranslateAPIConfig`（或 `BaseLLMConfig`）的配置类
-- 在 `Setting` 构造函数的 `configs` 和 `configIndices` 字典中添加条目
-- 若为 LLM 类引擎，加入 `LLM_BASED_APIS` 列表；若无需配置，加入 `NO_CONFIG_APIS`
-
-**LLM 请求序列化**：`src/apis/LLMRequestDataFactory.cs` — OpenAI 兼容 API 有回退机制，遇到 400/422 响应时依次尝试多种请求格式（Aliyun、Anthropic、Ollama、OpenAI、XAI 等）。
-
-**任务队列**：`src/models/TranslationTaskQueue.cs` — 新翻译完成时取消队列中所有更早的待处理任务，避免旧结果乱序显示。
-
-**设置**：`src/models/Setting.cs` — 以 `setting.json` 保存在工作目录。使用 `ConfigDictConverter`（位于 `TranslateAPI.cs`）进行 API 配置的多态 JSON 序列化。每次 `OnPropertyChanged` 调用都会自动保存文件。
-
-**历史记录**：SQLite（`Microsoft.Data.Sqlite`）— 数据库文件 `translation_history.db` 在工作目录。
-
-## 关键约定
-
-- `🔤` 标记用于在 LLM 提示词和上下文感知的传统 API 调用中界定源文本
-- `RegexPatterns`（`src/utils/RegexPatterns.cs` 中的源生成正则）用于全文预处理
-- 所有翻译错误以 `[ERROR]` 或 `[WARNING]` 前缀字符串呈现，不抛异常
-- UI 使用 WPF-UI（Fluent 设计）库 — XAML 页面在 `src/pages/`，窗口在 `src/windows/`
-- `Caption` 是单例（`Caption.GetInstance()`），作为所有 UI 视图的数据绑定枢纽
-
-## 平台限制
-
-- 需要 Windows 11 22H2+（LiveCaptions 功能）
-- 需要 .NET 8 运行时
-- 大量 P/Invoke user32.dll — 无跨平台兼容性
-- `Interop.UIAutomationClient` 包是 LiveCaptions 集成的关键依赖
+- 仓库**没有单元测试**
+- **每次功能更新后必须立即 git commit**，不要积累
+- 静态构造函数链式触发：App() → Translator.SyncLoop → static Translator() → Setting.Load() → TranslateAPI字典初始化 → SQLiteHistoryLogger静态构造
+- App() 中 `Translator.Setting?.Save()` 无效 — 此时静态构造函数未执行，Setting为null
+- `SupportedOSPlatformVersion=7.0` 但实际需 Win11 22H2+
+- OverlayWindow 按需创建/销毁，非启动时创建

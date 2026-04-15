@@ -186,7 +186,7 @@ Max Concurrent: 4 (Wave 1)
 
 ## TODOs
 
-- [ ] 1. 搭建 xUnit 测试项目基础设施
+- [x] 1. 搭建 xUnit 测试项目基础设施
 
   **What to do**:
   - 创建新测试项目 `LiveCaptionsTranslator.Tests`（xUnit）
@@ -232,7 +232,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `LiveCaptionsTranslator.Tests/*.csproj, LiveCaptionsTranslator.Tests/*.cs`
   - Pre-commit: `dotnet test`
 
-- [ ] 2. TranslationTaskQueue 版本号机制
+- [x] 2. TranslationTaskQueue 版本号机制
 
   **What to do**:
   - 修改 `TranslationTaskQueue.cs`：TranslationTask 增加 `int Version` 和 `int SentenceIndex` 字段
@@ -311,7 +311,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/models/TranslationTaskQueue.cs`
   - Pre-commit: `dotnet build`
 
-- [ ] 3. Caption SentenceState 数据结构
+- [x] 3. Caption SentenceState 数据结构
 
   **What to do**:
   - 在 `Caption.cs` 中定义 `SentenceState` 结构体/类：
@@ -378,7 +378,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/models/Caption.cs`
   - Pre-commit: `dotnet build`
 
-- [ ] 4. pendingTextQueue 元数据封装
+- [x] 4. pendingTextQueue 元数据封装
 
   **What to do**:
   - 创建 `TranslationRequest` 类替代裸字符串：

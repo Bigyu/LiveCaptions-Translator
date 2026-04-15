@@ -29,7 +29,9 @@ namespace LiveCaptionsTranslator.models
         private string overlayNoticePrefix = " ";
 
         public readonly object _sentenceStatesLock = new object();
-        public List<SentenceState> SentenceStates { get; } = new();
+        public Dictionary<int, SentenceState> SentenceStates { get; } = new();
+        public int FirstActiveSentenceIndex { get; set; } = 0;
+        public int LastActiveSentenceIndex { get; set; } = 0;
 
         public string OriginalCaption { get; set; } = string.Empty;
         public string TranslatedCaption { get; set; } = string.Empty;
