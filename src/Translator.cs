@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -16,7 +16,8 @@ namespace LiveCaptionsTranslator
         private static Caption? caption = null;
         private static Setting? setting = null;
 
-        private static readonly Queue<string> pendingTextQueue = new();
+        private static readonly Queue<TranslationRequest> pendingTextQueue = new();
+        private static readonly Dictionary<int, int> sentenceVersionCounters = new();
         private static readonly TranslationTaskQueue translationTaskQueue = new();
 
         private static List<string> trackedSentences = new();
@@ -121,7 +122,14 @@ namespace LiveCaptionsTranslator
                         string sentence = completedSentences[i];
                         if (Encoding.UTF8.GetByteCount(sentence) < TextUtil.SHORT_THRESHOLD && i > 0)
                             sentence = completedSentences[i - 1] + " " + sentence;
-                        pendingTextQueue.Enqueue(sentence);
+                        int version = GetNextVersion(i);
+                        pendingTextQueue.Enqueue(new TranslationRequest
+                        {
+                            OriginalText = sentence,
+                            SentenceIndex = i,
+                            IsCorrection = true,
+                            ExpectedVersion = version
+                        });
                     }
                 }
 
@@ -130,7 +138,14 @@ namespace LiveCaptionsTranslator
                     string sentence = completedSentences[i];
                     if (Encoding.UTF8.GetByteCount(sentence) < TextUtil.SHORT_THRESHOLD && i > 0)
                         sentence = completedSentences[i - 1] + " " + sentence;
-                    pendingTextQueue.Enqueue(sentence);
+                    int version = GetNextVersion(i);
+                    pendingTextQueue.Enqueue(new TranslationRequest
+                    {
+                        OriginalText = sentence,
+                        SentenceIndex = i,
+                        IsCorrection = false,
+                        ExpectedVersion = version
+                    });
                     lastEnqueuedIncomplete = string.Empty;
                 }
 
@@ -141,7 +156,15 @@ namespace LiveCaptionsTranslator
                     && Encoding.UTF8.GetByteCount(incompleteSentence) >= TextUtil.LONG_THRESHOLD
                     && string.CompareOrdinal(lastEnqueuedIncomplete, incompleteSentence) != 0)
                 {
-                    pendingTextQueue.Enqueue(incompleteSentence);
+                    int sentenceIndex = completedSentences.Count;
+                    int version = GetNextVersion(sentenceIndex);
+                    pendingTextQueue.Enqueue(new TranslationRequest
+                    {
+                        OriginalText = incompleteSentence,
+                        SentenceIndex = sentenceIndex,
+                        IsPreTranslation = true,
+                        ExpectedVersion = version
+                    });
                     lastEnqueuedIncomplete = incompleteSentence;
                 }
 
@@ -203,6 +226,15 @@ namespace LiveCaptionsTranslator
             return (completed, incomplete);
         }
 
+        private static int GetNextVersion(int sentenceIndex)
+        {
+            if (!sentenceVersionCounters.ContainsKey(sentenceIndex))
+                sentenceVersionCounters[sentenceIndex] = 1;
+            else
+                sentenceVersionCounters[sentenceIndex]++;
+            return sentenceVersionCounters[sentenceIndex];
+        }
+
         public static async Task TranslateLoop()
         {
             while (true)
@@ -222,13 +254,16 @@ namespace LiveCaptionsTranslator
 
                     if (LogOnlyFlag)
                     {
-                        bool isOverwrite = await IsOverwrite(originalSnapshot);
-                        await LogOnly(originalSnapshot, isOverwrite);
+                        bool isOverwrite = await IsOverwrite(originalSnapshot.OriginalText);
+                        await LogOnly(originalSnapshot.OriginalText, isOverwrite);
                     }
                     else
                     {
                         translationTaskQueue.Enqueue(token => Task.Run(
-                            () => Translate(originalSnapshot, token), token), originalSnapshot);
+                            () => Translate(originalSnapshot.OriginalText, token), token),
+                            originalSnapshot.OriginalText,
+                            originalSnapshot.SentenceIndex,
+                            originalSnapshot.ExpectedVersion);
                     }
                 }
 

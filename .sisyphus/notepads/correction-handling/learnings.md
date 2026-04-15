@@ -37,3 +37,15 @@
 - Added backward-compatible 2-param Enqueue overload (sentenceIndex=0, version=0) so existing TranslateLoop call still compiles
 - Log/AddContexts only called for complete translations (isComplete=true), not for partial/in-progress ones
 - CTS still kept on TranslationTask for now (TranslateLoop still passes CancellationTokenSource) — will be cleaned up in Task 6
+
+## 2026-04-16 TranslationRequest Metadata Class (Task 4)
+- Created TranslationRequest class in src/models/TranslationRequest.cs with 5 fields: OriginalText, SentenceIndex, IsCorrection, IsPreTranslation, ExpectedVersion
+- Changed pendingTextQueue from Queue<string> to Queue<TranslationRequest> in Translator.cs
+- Added sentenceVersionCounters (Dictionary<int,int>) for per-sentence version tracking
+- Added GetNextVersion(sentenceIndex) helper method that increments version counter per sentence
+- SyncLoop correction block (compareCount loop): IsCorrection=true, SentenceIndex=i
+- SyncLoop new sentence block (alignedTracked→completedSentences): IsCorrection=false, SentenceIndex=i
+- SyncLoop long incomplete fallback: IsPreTranslation=true, SentenceIndex=completedSentences.Count
+- TranslateLoop now passes originalSnapshot.OriginalText, SentenceIndex, ExpectedVersion to 4-param Enqueue
+- LogOnly mode uses originalSnapshot.OriginalText instead of bare string
+- Build succeeds with 0 errors (warnings are pre-existing nullability warnings)
